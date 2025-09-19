@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { apiStartService, apiStopService } from "@/common/request"
+import { apiStartService, apiStopService, apiGenAgoraData } from "@/common/request"
 import { useDispatch, useSelector } from "react-redux"
 import type { AppDispatch, RootState } from "@/store"
 import Header from "@/components/Layout/Header"
@@ -10,8 +10,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { InfoIcon } from "@/components/Icon"
 import { MicIconByStatus, NetworkIconByLevel } from "@/components/Icon"
 import { cn } from "@/lib/utils"
-import { setRoomConnected, setAgentConnected, addChatItem } from "@/store/reducers/global"
+import { setRoomConnected, setAgentConnected, addChatItem, setOptions } from "@/store/reducers/global"
 import dynamic from "next/dynamic"
+import AgoraRTC, { IAgoraRTCClient, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng"
 
 const DynamicMeetingInterface = dynamic(() => import("@/components/Meeting/MeetingInterface"), {
     ssr: false,
@@ -36,22 +37,118 @@ export default function TranscriptionPage() {
     const language = useSelector((state: RootState) => state.global.language)
     const voiceType = useSelector((state: RootState) => state.global.voiceType)
 
-    // const [rtcManager] = useState(() => new RtcManager())
     const [transcripts, setTranscripts] = useState<TranscriptItem[]>([])
     const [isRecording, setIsRecording] = useState(false)
-    // const [audioTrack, setAudioTrack] = useState<IMicrophoneAudioTrack>()
+    const [audioTrack, setAudioTrack] = useState<IMicrophoneAudioTrack>()
+    const [rtcClient, setRtcClient] = useState<IAgoraRTCClient>()
     const [error, setError] = useState<string>("")
     const [connectionStatus, setConnectionStatus] = useState<string>("未连接")
     const [agentConnecting, setAgentConnecting] = useState(false)
 
-    const transcriptsEndRef = useRef<HTMLDivElement>(null)
+    const messageCache = useRef<{ [key: string]: any[] }>({})
 
-    // Auto scroll to bottom - custom implementation
-    useEffect(() => {
-        if (transcriptsEndRef.current) {
-            transcriptsEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    // Message handling function similar to rtcManager
+    const handleChunkMessage = (formattedChunk: string) => {
+        try {
+            console.log("[transcription] Processing chunk:", formattedChunk)
+
+            // Split the chunk by the delimiter "|"
+            const parts = formattedChunk.split('|')
+            if (parts.length < 4) {
+                console.log("[transcription] Invalid chunk format, parts:", parts.length)
+                return
+            }
+
+            const [message_id, partIndexStr, totalPartsStr, content] = parts
+            const part_index = parseInt(partIndexStr, 10)
+            const total_parts = totalPartsStr === '???' ? -1 : parseInt(totalPartsStr, 10)
+
+            console.log("[transcription] Chunk details:", { message_id, part_index, total_parts, contentLength: content.length })
+
+            // Ensure total_parts is known before processing further
+            if (total_parts === -1) {
+                console.warn(`[transcription] Total parts for message ${message_id} unknown, waiting for further parts.`)
+                return
+            }
+
+            const chunkData = {
+                message_id,
+                part_index,
+                total_parts,
+                content,
+            }
+
+            // Check if we already have an entry for this message
+            if (!messageCache.current[message_id]) {
+                messageCache.current[message_id] = []
+                // Set a timeout to discard incomplete messages
+                setTimeout(() => {
+                    if (messageCache.current[message_id]?.length !== total_parts) {
+                        console.warn(`[transcription] Incomplete message with ID ${message_id} discarded`)
+                        delete messageCache.current[message_id]
+                    }
+                }, 5000)
+            }
+
+            // Cache this chunk by message_id
+            messageCache.current[message_id].push(chunkData)
+
+            // If all parts are received, reconstruct the message
+            if (messageCache.current[message_id].length === total_parts) {
+                const completeMessage = reconstructMessage(messageCache.current[message_id])
+
+                try {
+                    const decodedMessage = base64ToUtf8(completeMessage)
+                    const messageData = JSON.parse(decodedMessage)
+
+                    console.log(`[transcription] Complete message parsed:`, messageData)
+
+                    const { stream_id, is_final, text, text_ts, data_type, role } = messageData
+                    const isAgent = role === "assistant"
+
+                    if (text && text.trim().length > 0) {
+                        const textItem = {
+                            type: isAgent ? EMessageType.AGENT : EMessageType.USER,
+                            time: text_ts || Date.now(),
+                            text: text,
+                            data_type: EMessageDataType.TEXT,
+                            userId: stream_id,
+                            isFinal: is_final,
+                        }
+
+                        dispatch(addChatItem(textItem))
+                    }
+                } catch (parseError) {
+                    console.error('[transcription] Error parsing complete message:', parseError)
+                }
+
+                // Clean up the cache
+                delete messageCache.current[message_id]
+            }
+        } catch (error) {
+            console.error('[transcription] Error processing chunk:', error)
         }
-    }, [transcripts])
+    }
+
+    // Function to reconstruct the full message from chunks
+    const reconstructMessage = (chunks: any[]): string => {
+        // Sort chunks by their part index
+        chunks.sort((a, b) => a.part_index - b.part_index)
+        // Concatenate all chunks to form the full message
+        return chunks.map(chunk => chunk.content).join('')
+    }
+
+    // Base64 to UTF-8 decoder
+    const base64ToUtf8 = (base64: string): string => {
+        const binaryString = atob(base64)
+        const bytes = new Uint8Array(binaryString.length)
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i)
+        }
+        return new TextDecoder('utf-8').decode(bytes)
+    }
+
+    // Removed auto scroll - user controls scrolling manually
 
     // Update local transcripts from chatItems
     useEffect(() => {
@@ -64,6 +161,19 @@ export default function TranscriptionPage() {
         }))
         setTranscripts(newTranscripts)
     }, [chatItems])
+
+    // Cleanup on component unmount
+    useEffect(() => {
+        return () => {
+            // Cleanup RTC resources on unmount
+            if (audioTrack) {
+                audioTrack.close()
+            }
+            if (rtcClient) {
+                rtcClient.leave().catch(console.error)
+            }
+        }
+    }, [])
 
     // Connect to meeting_assistant agent
     const connectAgent = async () => {
@@ -113,23 +223,103 @@ export default function TranscriptionPage() {
     const startRecording = async () => {
         try {
             setError("")
+            setConnectionStatus("初始化音频...")
+
+            // Create RTC client if not exists
+            let client = rtcClient
+            if (!client) {
+                client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" })
+                setRtcClient(client)
+            }
+
+            // Get Agora credentials
+            const res = await apiGenAgoraData({
+                channel: options.channel,
+                userId: options.userId
+            })
+
+            if (res.code !== "0") {
+                throw new Error("获取Agora认证失败")
+            }
+
+            const { appId, token } = res.data
+
+            // Update options with credentials
+            dispatch(setOptions({
+                ...options,
+                appId,
+                token
+            }))
+
+            setConnectionStatus("连接音频通道...")
+
+            // Set up stream message listener before joining
+            client.on("stream-message", (uid, stream) => {
+                console.log("[transcription] Received stream message from uid:", uid, "stream length:", stream.byteLength)
+
+                try {
+                    // Convert stream to string
+                    const ascii = String.fromCharCode(...new Uint8Array(stream))
+                    console.log("[transcription] Raw stream message:", ascii)
+
+                    // Handle the message parsing similar to rtcManager
+                    handleChunkMessage(ascii)
+                } catch (error) {
+                    console.error("[transcription] Error processing stream message:", error)
+                }
+            })
+
+            // Join the channel
+            await client.join(appId, options.channel, token, options.userId)
+
+            setConnectionStatus("创建音频轨道...")
+
+            // Create microphone audio track
+            const micTrack = await AgoraRTC.createMicrophoneAudioTrack()
+            setAudioTrack(micTrack)
+
+            setConnectionStatus("发布音频流...")
+
+            // Publish audio track
+            await client.publish([micTrack])
+
             setIsRecording(true)
             setConnectionStatus("录音中...")
             dispatch(setRoomConnected(true))
+
+            console.log("Audio recording started successfully")
         } catch (err) {
             setError("启动录音失败: " + (err as Error).message)
             setConnectionStatus("连接失败")
+            setIsRecording(false)
             console.error("Start recording error:", err)
         }
     }
 
     const stopRecording = async () => {
         try {
+            setConnectionStatus("停止录音...")
+
+            // Unpublish and close audio track
+            if (audioTrack && rtcClient) {
+                await rtcClient.unpublish([audioTrack])
+                audioTrack.close()
+                setAudioTrack(undefined)
+            }
+
+            // Leave the channel
+            if (rtcClient) {
+                await rtcClient.leave()
+            }
+
             setIsRecording(false)
             setConnectionStatus(agentConnected ? "AI 助手已连接" : "未连接")
             dispatch(setRoomConnected(false))
+
+            console.log("Audio recording stopped successfully")
         } catch (err) {
             setError("停止录音失败: " + (err as Error).message)
+            setIsRecording(false)
             console.error("Stop recording error:", err)
         }
     }
@@ -341,7 +531,6 @@ export default function TranscriptionPage() {
                                             </div>
                                         ))
                                     )}
-                                    <div ref={transcriptsEndRef} />
                                 </div>
                             </CardContent>
                         </Card>

@@ -419,6 +419,12 @@ export const getGraphProperties = (
                 "api_key": process.env.OPENAI_API_KEY,
                 "model": "whisper-1",
                 "language": converteLanguage
+            },
+            "tts": {
+                "api_key": process.env.OPENAI_API_KEY,
+                "model": "tts-1",
+                "voice": "alloy",
+                "language": converteLanguage
             }
         }
     }
