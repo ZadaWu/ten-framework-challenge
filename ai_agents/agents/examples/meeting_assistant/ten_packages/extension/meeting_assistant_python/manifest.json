@@ -1,0 +1,56 @@
+{
+  "type": "extension",
+  "name": "meeting_assistant_python",
+  "version": "0.1.0",
+  "dependencies": [
+    {
+      "type": "system",
+      "name": "ten_runtime_python",
+      "version": "0.11"
+    },
+    {
+      "type": "system",
+      "name": "ten_ai_base",
+      "version": "0.7"
+    }
+  ],
+  "package": {
+    "include": [
+      "manifest.json",
+      "property.json",
+      "**.tent",
+      "**.py",
+      "README.md",
+      "tests/**"
+    ]
+  },
+  "api": {
+    "property": {
+      "properties": {
+        "greeting": {
+          "type": "string"
+        },
+        "meeting": {
+          "type": "object",
+          "properties": {
+            "auto_summary_interval": {
+              "type": "int32"
+            },
+            "enable_action_detection": {
+              "type": "bool"
+            },
+            "enable_speaker_identification": {
+              "type": "bool"
+            },
+            "enable_real_time_summary": {
+              "type": "bool"
+            },
+            "enable_auto_scheduling": {
+              "type": "bool"
+            }
+          }
+        }
+      }
+    }
+  }
+}

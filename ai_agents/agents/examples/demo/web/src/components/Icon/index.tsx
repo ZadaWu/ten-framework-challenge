@@ -964,3 +964,31 @@ export const OceanBaseIcon = (props: React.SVGProps<SVGSVGElement>) => {
     </svg>
   );
 };
+
+export const TranscriptionIcon = (props: React.SVGProps<SVGSVGElement>) => {
+  return (
+    <svg
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      {...props}
+    >
+      <path
+        d="M9 2C8.45 2 8 2.45 8 3V12C8 12.55 8.45 13 9 13C9.55 13 10 12.55 10 12V3C10 2.45 9.55 2 9 2Z"
+        fill="currentColor"
+      />
+      <path
+        d="M15 2C14.45 2 14 2.45 14 3V12C14 12.55 14.45 13 15 13C15.55 13 16 12.55 16 12V3C16 2.45 15.55 2 15 2Z"
+        fill="currentColor"
+      />
+      <path
+        d="M6 7V8C6 10.21 7.79 12 10 12H14C16.21 12 18 10.21 18 8V7H20V8C20 11.31 17.31 14 14 14H13V16H16V18H8V16H11V14H10C6.69 14 4 11.31 4 8V7H6Z"
+        fill="currentColor"
+      />
+      <rect x="2" y="20" width="20" height="2" rx="1" fill="currentColor" />
+      <rect x="3" y="19" width="18" height="1" fill="currentColor" opacity="0.5" />
+    </svg>
+  );
+};

@@ -1,0 +1,12 @@
+ten_ai_base>=0.6.9
+pydantic>=2.0.0
+aiohttp>=3.8.0
+python-dateutil>=2.8.0
+google-api-python-client>=2.0.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=0.5.0
+microsoft-graph>=0.2.0
+requests>=2.28.0
+python-slugify>=6.0.0
+asyncio-throttle>=1.0.0
+pytz>=2022.0

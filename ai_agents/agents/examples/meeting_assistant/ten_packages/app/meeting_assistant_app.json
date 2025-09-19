@@ -1,0 +1,195 @@
+{
+  "type": "app",
+  "name": "meeting_assistant_app",
+  "version": "1.0.0",
+  "graph": {
+    "connections": [
+      {
+        "app": "meeting_assistant_app",
+        "extension_group": "default",
+        "extension": "agora_rtc",
+        "cmd_out": [
+          {
+            "name": "on_user_joined",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "meeting_assistant_python"
+              }
+            ]
+          },
+          {
+            "name": "on_user_left",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "meeting_assistant_python"
+              }
+            ]
+          }
+        ],
+        "data_out": [
+          {
+            "name": "pcm_frame",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "asr"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "app": "meeting_assistant_app",
+        "extension_group": "default",
+        "extension": "asr",
+        "data_out": [
+          {
+            "name": "asr_result",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "meeting_assistant_python"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "app": "meeting_assistant_app",
+        "extension_group": "default",
+        "extension": "meeting_assistant_python",
+        "data_out": [
+          {
+            "name": "text_data",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "llm"
+              }
+            ]
+          },
+          {
+            "name": "tts_text_input",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "tts"
+              }
+            ]
+          },
+          {
+            "name": "message",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "message_collector"
+              }
+            ]
+          }
+        ],
+        "cmd_out": [
+          {
+            "name": "flush",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "llm"
+              },
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "tts"
+              },
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "agora_rtc"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "app": "meeting_assistant_app",
+        "extension_group": "default",
+        "extension": "llm",
+        "data_out": [
+          {
+            "name": "llm_result",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "meeting_assistant_python"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "app": "meeting_assistant_app",
+        "extension_group": "default",
+        "extension": "tts",
+        "data_out": [
+          {
+            "name": "pcm_frame",
+            "dest": [
+              {
+                "app": "meeting_assistant_app",
+                "extension_group": "default",
+                "extension": "agora_rtc"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "extension_groups": [
+      {
+        "name": "default",
+        "extensions": [
+          {
+            "name": "agora_rtc",
+            "addon": "agora_rtc_extension",
+            "extension_group": "default"
+          },
+          {
+            "name": "asr",
+            "addon": "azure_asr_extension",
+            "extension_group": "default"
+          },
+          {
+            "name": "meeting_assistant_python",
+            "addon": "meeting_assistant_python",
+            "extension_group": "default"
+          },
+          {
+            "name": "llm",
+            "addon": "openai_llm2_python",
+            "extension_group": "default"
+          },
+          {
+            "name": "tts",
+            "addon": "openai_tts2_python",
+            "extension_group": "default"
+          },
+          {
+            "name": "message_collector",
+            "addon": "message_collector_extension",
+            "extension_group": "default"
+          }
+        ]
+      }
+    ]
+  }
+}

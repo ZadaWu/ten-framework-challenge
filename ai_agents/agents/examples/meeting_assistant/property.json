@@ -1,0 +1,228 @@
+{
+  "ten": {
+    "predefined_graphs": [
+      {
+        "name": "meeting_assistant",
+        "auto_start": true,
+        "graph": {
+          "nodes": [
+            {
+              "type": "extension",
+              "name": "agora_rtc",
+              "addon": "agora_rtc",
+              "extension_group": "default",
+              "property": {
+                "app_id": "${env:AGORA_APP_ID}",
+                "app_certificate": "${env:AGORA_APP_CERTIFICATE|}",
+                "channel": "meeting_assistant_test",
+                "stream_id": 1234,
+                "remote_stream_id": 123,
+                "subscribe_audio": true,
+                "publish_audio": true,
+                "publish_data": true,
+                "enable_agora_asr": false
+              }
+            },
+            {
+              "type": "extension",
+              "name": "meeting_assistant_python",
+              "addon": "meeting_assistant_python",
+              "extension_group": "control",
+              "property": {
+                "greeting": "Hello, I am your AI Meeting Assistant. I will help you with meeting transcription, summary, and task management.",
+                "meeting": {
+                  "auto_summary_interval": 300,
+                  "enable_action_detection": true,
+                  "enable_speaker_identification": true,
+                  "enable_real_time_summary": true,
+                  "enable_auto_scheduling": true
+                }
+              }
+            },
+            {
+              "type": "extension",
+              "name": "message_collector",
+              "addon": "message_collector2",
+              "extension_group": "transcriber",
+              "property": {}
+            },
+            {
+              "type": "extension",
+              "name": "asr",
+              "addon": "openai_asr_python",
+              "extension_group": "default",
+              "property": {
+                "api_key": "${env:OPENAI_API_KEY}",
+                "model": "whisper-1",
+                "language": "zh"
+              }
+            },
+            {
+              "type": "extension",
+              "name": "llm",
+              "addon": "openai_llm2_python",
+              "extension_group": "default",
+              "property": {
+                "api_key": "${env:OPENAI_API_KEY}",
+                "model": "gpt-4o-mini",
+                "max_tokens": 2048,
+                "temperature": 0.7,
+                "system_prompt": "You are an AI meeting assistant. Help with meeting transcription, summarization, and task extraction."
+              }
+            },
+            {
+              "type": "extension",
+              "name": "tts",
+              "addon": "openai_tts2_python",
+              "extension_group": "default",
+              "property": {
+                "api_key": "${env:OPENAI_API_KEY}",
+                "voice": "alloy",
+                "model": "tts-1",
+                "language": "zh"
+              }
+            }
+          ],
+          "connections": [
+            {
+              "extension": "agora_rtc",
+              "audio_frame": [
+                {
+                  "name": "pcm_frame",
+                  "dest": [
+                    {
+                      "extension": "asr"
+                    }
+                  ]
+                },
+                {
+                  "name": "pcm_frame",
+                  "source": [
+                    {
+                      "extension": "tts"
+                    }
+                  ]
+                }
+              ],
+              "data": [
+                {
+                  "name": "data",
+                  "source": [
+                    {
+                      "extension": "message_collector"
+                    }
+                  ]
+                }
+              ],
+              "cmd": [
+                {
+                  "names": [
+                    "on_user_joined",
+                    "on_user_left"
+                  ],
+                  "dest": [
+                    {
+                      "extension": "meeting_assistant_python"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "extension": "asr",
+              "data": [
+                {
+                  "name": "asr_result",
+                  "dest": [
+                    {
+                      "extension": "meeting_assistant_python"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "extension": "meeting_assistant_python",
+              "data": [
+                {
+                  "name": "text_data",
+                  "dest": [
+                    {
+                      "extension": "llm"
+                    }
+                  ]
+                },
+                {
+                  "name": "tts_text_input",
+                  "dest": [
+                    {
+                      "extension": "tts"
+                    }
+                  ]
+                },
+                {
+                  "name": "message",
+                  "dest": [
+                    {
+                      "extension": "message_collector"
+                    }
+                  ]
+                }
+              ],
+              "cmd": [
+                {
+                  "name": "flush",
+                  "dest": [
+                    {
+                      "extension": "llm"
+                    },
+                    {
+                      "extension": "tts"
+                    },
+                    {
+                      "extension": "agora_rtc"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "extension": "llm",
+              "data": [
+                {
+                  "name": "llm_result",
+                  "dest": [
+                    {
+                      "extension": "meeting_assistant_python"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "log": {
+      "handlers": [
+        {
+          "matchers": [
+            {
+              "level": "info"
+            }
+          ],
+          "formatter": {
+            "type": "plain",
+            "colored": true
+          },
+          "emitter": {
+            "type": "console",
+            "config": {
+              "stream": "stdout"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

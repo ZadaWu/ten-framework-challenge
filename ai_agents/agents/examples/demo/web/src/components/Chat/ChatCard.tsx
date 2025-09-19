@@ -7,6 +7,7 @@ import PdfSelect from "@/components/Chat/PdfSelect"
 import { useAppDispatch, useAppSelector, isRagGraph, isLanguageSupported } from "@/common"
 import { setRtmConnected, addChatItem } from "@/store/reducers/global"
 import MessageList from "@/components/Chat/MessageList"
+import MeetingInterface from "@/components/Meeting/MeetingInterface"
 import { Button } from "@/components/ui/button"
 import { Send } from "lucide-react"
 import { rtmManager } from "@/manager/rtm"
@@ -22,7 +23,11 @@ export default function ChatCard(props: { className?: string }) {
   const rtmConnected = useAppSelector((state) => state.global.rtmConnected)
   const options = useAppSelector((state) => state.global.options)
   const agentConnected = useAppSelector((state) => state.global.agentConnected)
+  const chatItems = useAppSelector((state) => state.global.chatItems)
   const dispatch = useAppDispatch()
+
+  // Check if current graph is meeting assistant
+  const isMeetingAssistant = graphName === "meeting_assistant"
 
   const disableInputMemo = React.useMemo(() => {
     return (
@@ -141,13 +146,17 @@ export default function ChatCard(props: { className?: string }) {
             }
             {isRagGraph(graphName) && <PdfSelect />}
           </div>
-          {/* Chat messages would go here */}
-          <MessageList />
-          <div
-            className={cn("border-t pt-4", {
-              ["hidden"]: !graphName.includes("rtm"), // TODO: TMP use rtm key word
-            })}
-          >
+          {/* Conditional rendering: Meeting Interface or Regular Chat */}
+          {isMeetingAssistant ? (
+            <MeetingInterface messages={chatItems} className="flex-1 min-h-0" />
+          ) : (
+            <>
+              <MessageList />
+              <div
+                className={cn("border-t pt-4", {
+                  ["hidden"]: !graphName.includes("rtm"), // TODO: TMP use rtm key word
+                })}
+              >
             <form
               onSubmit={handleInputSubmit}
               className="flex items-center space-x-2"
@@ -180,6 +189,8 @@ export default function ChatCard(props: { className?: string }) {
               </Button>
             </form>
           </div>
+            </>
+          )}
         </div>
       </div>
     </>

@@ -386,6 +386,41 @@ export const getGraphProperties = (
                 }
             }
         }
+    } else if (graphName === "meeting_assistant") {
+        let meeting_greeting = greeting || "Hello, I am your AI Meeting Assistant. I will help you with meeting transcription, summary, and task management.";
+
+        if (language === "zh-CN") {
+            meeting_greeting = greeting || "您好，我是您的AI会议助手。我将帮助您进行会议转录、总结和任务管理。";
+        } else if (language === "ja-JP") {
+            meeting_greeting = greeting || "こんにちは、私はAI会议アシスタントです。会議の転写、要约、タスク管理をお手伝いします。";
+        } else if (language === "ko-KR") {
+            meeting_greeting = greeting || "안녕하세요, 저는 AI 회의 도우미입니다. 회의 전사, 요약 및 업무 관리를 도와드리겠습니다.";
+        }
+
+        return {
+            "meeting_assistant_python": {
+                "greeting": meeting_greeting,
+                "meeting": {
+                    "auto_summary_interval": 300,
+                    "enable_action_detection": true,
+                    "enable_speaker_identification": true,
+                    "enable_real_time_summary": true,
+                    "enable_auto_scheduling": true
+                }
+            },
+            "llm": {
+                "api_key": process.env.OPENAI_API_KEY,
+                "model": "gpt-4o-mini",
+                "max_tokens": 2048,
+                "temperature": 0.7,
+                "system_prompt": "You are an AI meeting assistant. Help with meeting transcription, summarization, and task extraction."
+            },
+            "asr": {
+                "api_key": process.env.OPENAI_API_KEY,
+                "model": "whisper-1",
+                "language": converteLanguage
+            }
+        }
     }
 
     return {}

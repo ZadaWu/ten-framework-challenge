@@ -14,7 +14,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
-import { GitHubIcon, PaletteIcon } from "@/components/Icon"
+import { GitHubIcon, PaletteIcon, TranscriptionIcon } from "@/components/Icon"
 import {
   useAppSelector,
   useAppDispatch,
@@ -119,6 +119,17 @@ export function HeaderRoomInfo() {
 export function HeaderActions() {
   return (
     <div className="flex space-x-2 md:space-x-4">
+      {/* Meeting Transcription Button */}
+      <Button size="sm" variant="ghost" asChild>
+        <NextLink href="/transcription">
+          <TranscriptionIcon className="h-4 w-4 md:h-5 md:w-5" />
+          <span className="sr-only">Meeting Transcription</span>
+          <span className="hidden text-xs font-semibold md:block md:text-sm">
+            转录
+          </span>
+        </NextLink>
+      </Button>
+
       {/* <NextLink href={GITHUB_URL} target="_blank">
         <GitHubIcon className="h-4 w-4 md:h-5 md:w-5" />
         <span className="sr-only">GitHub</span>

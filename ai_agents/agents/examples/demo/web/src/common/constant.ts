@@ -137,12 +137,17 @@ export const GROUPED_GRAPH_OPTIONS = {
       value: "va_coze_azure",
     },
   ],
-  // "Specialized Agents": [
-  //   {
-  //     label: "Story Teller with Image Generator",
-  //     value: "story_teller_stt_integrated",
-  //   },
-  // Uncomment when needed
+  "Specialized Agents": [
+    {
+      label: "AI Meeting Assistant",
+      value: "meeting_assistant",
+    },
+    // {
+    //   label: "Story Teller with Image Generator",
+    //   value: "story_teller_stt_integrated",
+    // },
+    // Uncomment when needed
+  ],
 };
 
 export const GRAPH_OPTIONS: GraphOptionItem[] = Object.values(
