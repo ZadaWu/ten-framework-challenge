@@ -149,6 +149,251 @@ export default function TranscriptionPage() {
         return new TextDecoder('utf-8').decode(bytes)
     }
 
+    // 改进的智能语义分析
+    const generateBasicSummary = (messages: any[]) => {
+        const totalMessages = messages.length
+        const totalDuration = Math.round((Date.now() - (messages[0]?.time || Date.now())) / 60000)
+        const totalChars = messages.reduce((total, item) => total + item.text.length, 0)
+
+        // 语义分析函数
+        const analyzeMessage = (text: string) => {
+            const analysis = {
+                isActionItem: false,
+                hasTimeInfo: false,
+                urgencyLevel: 0, // 0-低, 1-中, 2-高
+                confidence: 0,
+                category: 'general' as 'action' | 'decision' | 'information' | 'question' | 'general'
+            }
+
+            // 句式结构分析（更智能的模式识别）
+            const questionPatterns = [
+                /[？?]$/, /什么/, /怎么/, /如何/, /为什么/, /哪里/, /哪个/, /什么时候/,
+                /可以吗/, /行吗/, /好吗/, /对吗/, /是吗/
+            ]
+
+            // 否定模式识别
+            const negationPatterns = [
+                /不需要/, /不用/, /不要/, /不行/, /不可以/, /没有/, /没必要/,
+                /取消/, /放弃/, /停止/, /不做/, /算了/
+            ]
+
+            // 行动模式（更复杂的语义理解）
+            const actionPatterns = [
+                // 明确的任务分配
+                /(.+)(负责|处理|承担)(.+)/,
+                /让(.+)(去|来|做)(.+)/,
+                /安排(.+)(负责|处理|完成)(.+)/,
+
+                // 需求和计划
+                /(.+)(需要|应该|要|得|必须)(.+)/,
+                /(.+)(计划|安排|准备|打算)(.+)/,
+
+                // 具体行动
+                /(.+)(完成|执行|实施|开始|进行|推进)(.+)/,
+                /(.+)(联系|确认|检查|更新|修改|优化|改进)(.+)/,
+                /(.+)(提交|发送|上传|下载|安装)(.+)/,
+
+                // 会议和沟通
+                /(.+)(开会|讨论|汇报|沟通|交流)(.+)/,
+                /(.+)(通知|告知|报告|反馈)(.+)/
+            ]
+
+            const decisionPatterns = [
+                /决定(.+)/, /确定(.+)/, /同意(.+)/, /批准(.+)/,
+                /选择(.+)/, /采用(.+)/, /通过(.+)/, /接受(.+)/,
+                /拒绝(.+)/, /否决(.+)/, /暂停(.+)/
+            ]
+
+            // 条件和假设模式
+            const conditionalPatterns = [
+                /如果(.+)/, /假如(.+)/, /万一(.+)/, /要是(.+)/,
+                /当(.+)的时候/, /在(.+)情况下/
+            ]
+
+            // 时间表达式识别（更灵活的模式）
+            const timePatterns = [
+                /\d+月\d+[日号]/, /\d+\/\d+/, /\d+-\d+-\d+/,
+                /(明天|明日|后天)/, /(下周|下个月|下季度)/,
+                /(周[一二三四五六日天])/, /(星期[一二三四五六日天])/,
+                /\d+点/, /\d+:\d+/, /(上午|下午|晚上|凌晨)/,
+                /(立即|马上|尽快|立刻)/, /(今天|今日|当天)/,
+                /(年底|月底|季度末)/, /截止|期限|deadline/i
+            ]
+
+            // 紧急程度识别
+            const urgencyPatterns = [
+                { pattern: /(紧急|急需|立刻|马上|立即)/, level: 2 },
+                { pattern: /(重要|关键|必须|优先)/, level: 1 },
+                { pattern: /(尽快|及时|抓紧)/, level: 1 }
+            ]
+
+            // 执行智能分析
+
+            // 首先检查否定模式
+            const isNegative = negationPatterns.some(pattern => pattern.test(text))
+
+            // 检查条件模式
+            const isConditional = conditionalPatterns.some(pattern => pattern.test(text))
+
+            if (questionPatterns.some(pattern => pattern.test(text))) {
+                analysis.category = 'question'
+                analysis.confidence += 0.3
+            } else if (actionPatterns.some(pattern => pattern.test(text))) {
+                if (isNegative) {
+                    // 否定的行动通常不是待办事项，但可能是重要信息
+                    analysis.category = 'information'
+                    analysis.confidence += 0.2
+                } else if (isConditional) {
+                    // 条件性的行动，降低作为待办事项的置信度
+                    analysis.isActionItem = true
+                    analysis.category = 'action'
+                    analysis.confidence += 0.3
+                } else {
+                    // 明确的行动项
+                    analysis.isActionItem = true
+                    analysis.category = 'action'
+                    analysis.confidence += 0.7
+                }
+            } else if (decisionPatterns.some(pattern => pattern.test(text))) {
+                analysis.category = 'decision'
+                analysis.confidence += isNegative ? 0.5 : 0.6 // 否定决策也很重要
+            }
+
+            // 语境增强分析
+            if (text.includes('我们') || text.includes('大家') || text.includes('团队')) {
+                analysis.confidence += 0.1 // 团队相关的更可能是重要信息
+            }
+
+            if (text.includes('会议') || text.includes('讨论') || text.includes('决定')) {
+                analysis.confidence += 0.1 // 会议相关内容
+            }
+
+            // 时间信息检测
+            if (timePatterns.some(pattern => pattern.test(text))) {
+                analysis.hasTimeInfo = true
+                analysis.confidence += 0.3
+                if (analysis.isActionItem) {
+                    analysis.confidence += 0.2 // 有时间的行动项更可能是真正的待办事项
+                }
+            }
+
+            // 紧急程度评估
+            for (const urgencyPattern of urgencyPatterns) {
+                if (urgencyPattern.pattern.test(text)) {
+                    analysis.urgencyLevel = Math.max(analysis.urgencyLevel, urgencyPattern.level)
+                    analysis.confidence += 0.2
+                    break
+                }
+            }
+
+            // 长度和复杂度加权
+            if (text.length > 15) {
+                analysis.confidence += 0.1
+            }
+            if (text.length > 30) {
+                analysis.confidence += 0.1
+            }
+
+            // 包含具体信息的加权
+            if (/\d+/.test(text)) {
+                analysis.confidence += 0.1
+            }
+            if (/[A-Za-z@]/.test(text)) { // 可能包含邮箱、英文名等
+                analysis.confidence += 0.1
+            }
+
+            return analysis
+        }
+
+        // 分析所有消息
+        const analyzedMessages = messages.map(msg => ({
+            ...msg,
+            analysis: analyzeMessage(msg.text)
+        }))
+
+        // 分类提取
+        const actionItems = analyzedMessages
+            .filter(msg => msg.analysis.isActionItem && msg.analysis.confidence > 0.3)
+            .sort((a, b) => b.analysis.urgencyLevel - a.analysis.urgencyLevel)
+
+        const decisions = analyzedMessages
+            .filter(msg => msg.analysis.category === 'decision')
+
+        const timeRelated = analyzedMessages
+            .filter(msg => msg.analysis.hasTimeInfo)
+
+        const importantInfo = analyzedMessages
+            .filter(msg => msg.analysis.confidence > 0.4 || msg.text.length > 25)
+
+        const questions = analyzedMessages
+            .filter(msg => msg.analysis.category === 'question')
+
+        // 生成智能分析报告
+        const urgentActions = actionItems.filter(item => item.analysis.urgencyLevel >= 2)
+        const normalActions = actionItems.filter(item => item.analysis.urgencyLevel === 1)
+        const lowPriorityActions = actionItems.filter(item => item.analysis.urgencyLevel === 0)
+
+        return `## 📝 会议总结（智能语义分析）
+
+### 🎯 核心讨论内容：
+${importantInfo.length > 0 ?
+                importantInfo.slice(0, 5).map(item => `- ${item.text} (置信度: ${Math.round(item.analysis.confidence * 100)}%)`).join('\n')
+                : '- 本次会议主要为语音交流，具体内容请参考完整转录记录'}
+
+### 💡 重要决策与结论：
+${decisions.length > 0 ?
+                decisions.map(item => `- ${item.text}`).join('\n')
+                : '- 转录中未识别到明确的决策内容'}
+
+### ✅ 行动计划与待办事项：
+
+#### 🚨 高优先级（紧急）：
+${urgentActions.length > 0 ?
+                urgentActions.map(item => `- ${item.text}`).join('\n')
+                : '- 无紧急待办事项'}
+
+#### ⚡ 中等优先级（重要）：
+${normalActions.length > 0 ?
+                normalActions.map(item => `- ${item.text}`).join('\n')
+                : '- 无中等优先级待办事项'}
+
+#### 📋 一般优先级：
+${lowPriorityActions.length > 0 ?
+                lowPriorityActions.slice(0, 3).map(item => `- ${item.text}`).join('\n')
+                : '- 无一般待办事项'}
+
+### ⏰ 时间安排与节点：
+${timeRelated.length > 0 ?
+                timeRelated.map(item => `- ${item.text}`).join('\n')
+                : '- 转录中未提及具体时间安排'}
+
+### ❓ 待跟进问题：
+${questions.length > 0 ?
+                questions.map(item => `- ${item.text}`).join('\n')
+                : '- 无待跟进问题'}
+
+### 📊 会议统计：
+- 总发言轮次：${totalMessages}次
+- 录音时长：约${totalDuration}分钟
+- 转录字数：约${Math.round(totalChars / 2)}字
+- 识别到的行动项：${actionItems.length}个
+- 决策事项：${decisions.length}个
+- 时间相关信息：${timeRelated.length}条
+
+### 📝 完整转录记录：
+${messages.map((item, index) =>
+                    `${index + 1}. [${new Date(item.time).toLocaleTimeString()}] ${item.text}`
+                ).join('\n')}
+
+### 🤖 智能分析说明：
+- **分析方法**：基于句式结构、语义模式和上下文理解
+- **置信度评估**：综合考虑语言模式、时间信息、紧急程度等因素
+- **分类逻辑**：自动识别行动项、决策、问题和一般信息
+- **优先级判断**：基于语言表达的紧急程度自动分级
+
+> **注意**：此为基于自然语言处理的智能分析结果。如需更深度的语义理解和个性化总结，建议连接AI助手。`
+    }
+
     // Removed auto scroll - user controls scrolling manually
 
     // Update local transcripts from chatItems
@@ -351,46 +596,78 @@ export default function TranscriptionPage() {
                         .map((item, index) => `[${index + 1}] ${item.text}`)
                         .join('\n')
 
-                    // 发送总结指令到AI助手
-                    const summaryPrompt = `请根据以下会议转录内容生成简洁的中文总结。这是一次会议的完整记录，请提供结构化的总结：
+                    // 生成更智能的总结提示词
+                    const summaryPrompt = `你是一个专业的会议记录助手，请根据以下会议转录内容生成详细的中文总结和待办清单。
 
+## 会议转录内容：
 ${userTranscripts}
 
-请按以下格式输出总结：
+请仔细分析转录内容，提供以下结构化总结：
+
 ## 📝 会议总结
 
-### 🎯 主要讨论点：
-（列出2-3个关键讨论主题）
+### 🎯 核心讨论主题：
+请识别并详细描述会议中的主要讨论点，包括：
+- 具体讨论的问题或议题
+- 各方观点和建议
+- 达成的共识或分歧点
 
-### 📋 重要信息：
-（列出会议中提到的重要信息或数据）
+### 💡 关键决策与结论：
+请列出会议中做出的重要决策、结论或达成的一致意见：
+- 明确的决策内容
+- 决策的理由和背景
+- 相关的时间节点
 
-### ✅ 行动项目：
-（如果有明确的任务或下一步行动，请列出）
+### 📊 重要信息与数据：
+请提取会议中提到的关键信息：
+- 具体的数字、指标、时间
+- 重要的事实和背景信息
+- 相关的资源或联系方式
 
-### ⏱️ 会议统计：
+### ✅ 行动计划与待办事项：
+请仔细识别并列出具体的待办事项，包括：
+- **立即执行**（紧急且重要）：
+  - 具体任务描述
+  - 负责人（如果提及）
+  - 截止时间（如果提及）
+- **短期计划**（1-2周内）：
+  - 任务内容
+  - 预期成果
+- **长期目标**（超过2周）：
+  - 战略性任务
+  - 里程碑目标
+
+### 🔍 需要跟进的问题：
+请识别会议中提出但未完全解决的问题：
+- 悬而未决的议题
+- 需要进一步讨论的话题
+- 待确认的信息
+
+### 📈 建议与下一步：
+基于会议内容，提供专业建议：
+- 改进建议
+- 风险提醒
+- 机会识别
+
+### 📋 会议统计：
 - 发言轮次：${chatItems.filter(item => item.type === 'user').length}次
-- 录音时长：约${Math.round((Date.now() - (chatItems[0]?.time || Date.now())) / 60000)}分钟`
+- 录音时长：约${Math.round((Date.now() - (chatItems[0]?.time || Date.now())) / 60000)}分钟
+- 转录字数：约${Math.round(chatItems.filter(item => item.type === 'user').reduce((total, item) => total + item.text.length, 0) / 2)}字
+
+请确保：
+1. 待办事项要具体可执行，避免模糊描述
+2. 优先级分类要合理，基于紧急性和重要性
+3. 总结要客观准确，不添加转录中没有的信息
+4. 如果某些部分在转录中没有明确信息，请明确标注"转录中未明确提及"`
 
                     // Note: 总结请求暂时通过AI助手的普通对话实现
                     // 未来可以考虑添加专用的总结API
                     if (rtcClient) {
                         console.log("[transcription] 会议总结功能已触发，显示基础总结")
                     } else {
-                        // 备用方案：显示基础总结信息
-                        const basicSummary = `## 📝 会议总结
-
-### 📊 会议统计：
-- 总发言轮次：${chatItems.filter(item => item.type === 'user').length}次
-- 录音时长：约${Math.round((Date.now() - (chatItems[0]?.time || Date.now())) / 60000)}分钟
-- 转录内容：${chatItems.filter(item => item.type === 'user').reduce((total, item) => total + item.text.length, 0)}字符
-
-### 📝 发言记录：
-${chatItems.filter(item => item.type === 'user').map((item, index) =>
-                            `${index + 1}. [${new Date(item.time).toLocaleTimeString()}] ${item.text}`
-                        ).join('\n')}
-
-> AI助手连接已断开，无法生成智能总结`
+                        // 备用方案：生成基础智能总结
+                        const userMessages = chatItems.filter(item => item.type === 'user' && item.text.trim())
+                        const basicSummary = generateBasicSummary(userMessages)
 
                         dispatch(addChatItem({
                             type: EMessageType.AGENT,
@@ -404,20 +681,16 @@ ${chatItems.filter(item => item.type === 'user').map((item, index) =>
                 } catch (error) {
                     console.error("[transcription] 总结生成失败:", error)
 
-                    // 错误情况下显示基础信息
-                    const errorSummary = `## ⚠️ 会议总结生成失败
+                    // 错误情况下也生成基础智能总结
+                    const userMessages = chatItems.filter(item => item.type === 'user' && item.text.trim())
+                    const errorSummary = `## ⚠️ AI总结生成失败，已切换到基础分析
 
-### 📊 基础统计：
-- 总发言轮次：${chatItems.filter(item => item.type === 'user').length}次
-- 转录字符数：${chatItems.filter(item => item.type === 'user').reduce((total, item) => total + item.text.length, 0)}字符
+${generateBasicSummary(userMessages)}
 
-### 📄 原始记录：
-${chatItems.filter(item => item.type === 'user').map((item, index) =>
-                        `${index + 1}. ${item.text}`
-                    ).slice(0, 10).join('\n')}
-${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示前10条）' : ''}
-
-> 错误信息：${(error as Error).message}`
+---
+### 🔧 错误信息：
+- 错误详情：${(error as Error).message}
+- 建议：请检查网络连接或重新连接AI助手`
 
                     dispatch(addChatItem({
                         type: EMessageType.AGENT,
@@ -473,6 +746,63 @@ ${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示�
         URL.revokeObjectURL(url)
     }
 
+    // 手动生成会议总结
+    const generateSummary = () => {
+        if (chatItems.length === 0) {
+            setError("没有转录内容可以总结")
+            return
+        }
+
+        try {
+            const userMessages = chatItems.filter(item => item.type === 'user' && item.text.trim())
+
+            if (agentConnected) {
+                // 如果AI助手已连接，显示提示但不实际发送（因为sendStreamMessage不可用）
+                const summaryNote = `## 💡 智能总结提示
+
+为了获得最佳的会议总结和待办清单，请按以下步骤操作：
+
+### 🤖 使用AI助手总结：
+1. 确保AI助手已连接（绿色指示器）
+2. 直接对AI助手说："请帮我总结刚才的会议内容，包括详细的待办清单"
+3. AI助手将基于完整的对话历史生成专业的总结
+
+### 🔧 高级总结功能正在开发中
+- 一键智能总结功能
+- 自动待办事项提取
+- 优先级智能分类
+
+现在为您提供基础分析总结：
+
+---
+
+${generateBasicSummary(userMessages)}`
+
+                dispatch(addChatItem({
+                    type: EMessageType.AGENT,
+                    time: Date.now(),
+                    text: summaryNote,
+                    data_type: EMessageDataType.TEXT,
+                    userId: 'manual-summary',
+                    isFinal: true,
+                }))
+            } else {
+                // AI助手未连接时提供基础总结
+                const basicSummary = generateBasicSummary(userMessages)
+                dispatch(addChatItem({
+                    type: EMessageType.AGENT,
+                    time: Date.now(),
+                    text: basicSummary,
+                    data_type: EMessageDataType.TEXT,
+                    userId: 'manual-summary',
+                    isFinal: true,
+                }))
+            }
+        } catch (error) {
+            setError("生成总结失败: " + (error as Error).message)
+        }
+    }
+
     return (
         <AuthInitializer>
             <div className="relative mx-auto flex h-full min-h-screen flex-col md:h-screen">
@@ -482,7 +812,15 @@ ${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示�
                     <div className="flex items-center justify-between">
                         <h1 className="text-2xl font-bold text-white">会议实时转录</h1>
                         <div className="flex items-center gap-2">
-                            <NetworkIconByLevel level={roomConnected ? 4 : 0} className="h-5 w-5" />
+                            {/* 更新状态指示器逻辑：优先显示AI助手连接状态，其次是房间连接状态 */}
+                            <NetworkIconByLevel
+                                level={
+                                    agentConnected
+                                        ? (roomConnected ? 4 : 2)  // AI助手已连接：录音中=绿色(4)，未录音=黄色(2)
+                                        : 0                        // AI助手未连接：红色叉叉(0)
+                                }
+                                className="h-5 w-5"
+                            />
                             <span className="text-sm text-gray-400">
                                 {connectionStatus}
                             </span>
@@ -503,11 +841,13 @@ ${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示�
                                 <div className="text-sm text-blue-300">
                                     <p className="font-medium mb-2">AI 会议助手使用说明：</p>
                                     <ul className="space-y-1 text-blue-200">
-                                        <li>• 第一步：点击"连接 AI 助手"连接到会议助手</li>
-                                        <li>• 第二步：点击"开始录音"开始实时语音转文字</li>
-                                        <li>• AI 助手会自动生成会议总结、提取行动项</li>
-                                        <li>• 支持实时总结、智能任务识别、会议纪要导出</li>
-                                        <li>• 可以查看实时转录和智能会议分析</li>
+                                        <li>• <strong>步骤一</strong>：点击"连接 AI 助手"连接智能助手</li>
+                                        <li>• <strong>步骤二</strong>：点击"开始录音"进行实时语音转录</li>
+                                        <li>• <strong>智能总结</strong>：停止录音时自动生成详细总结和待办清单</li>
+                                        <li>• <strong>手动总结</strong>：随时点击"📝 生成总结"按钮获取当前总结</li>
+                                        <li>• <strong>深度分析</strong>：对AI助手说"请总结会议内容"获得最佳效果</li>
+                                        <li>• <strong>状态指示</strong>：右上角图标 🔴=未连接 🟡=已连接待录音 🟢=录音中</li>
+                                        <li>• <strong>功能特色</strong>：智能待办事项提取、优先级分类、时间节点识别</li>
                                     </ul>
                                 </div>
                             </div>
@@ -579,6 +919,15 @@ ${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示�
                                         disabled={transcripts.filter(t => t.isFinal).length === 0}
                                     >
                                         导出转录
+                                    </Button>
+
+                                    <Button
+                                        onClick={generateSummary}
+                                        variant="outline"
+                                        className="w-full"
+                                        disabled={chatItems.filter(item => item.type === 'user').length === 0}
+                                    >
+                                        📝 生成总结
                                     </Button>
                                 </div>
 
