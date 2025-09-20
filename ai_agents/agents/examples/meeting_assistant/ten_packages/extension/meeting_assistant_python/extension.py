@@ -73,23 +73,33 @@ class MeetingAssistantExtension(AsyncExtension):
     @agent_event_handler(UserJoinedEvent)
     async def _on_user_joined(self, event: UserJoinedEvent):
         self._rtc_user_count += 1
-        if self._rtc_user_count == 1 and self.config and self.config.greeting:
-            await self._send_to_tts(self.config.greeting, True)
-            await self._send_transcript(
-                "assistant", self.config.greeting, True, 100
-            )
+        # 禁用初始问候语，静默模式
+        # if self._rtc_user_count == 1 and self.config and self.config.greeting:
+        #     await self._send_to_tts(self.config.greeting, True)
+        #     await self._send_transcript(
+        #         "assistant", self.config.greeting, True, 100
+        #     )
 
-            # Auto-start meeting if configured
-            if not self.meeting_active:
-                await self._start_meeting()
+        # Auto-start meeting if configured
+        if not self.meeting_active:
+            await self._start_meeting()
+            self.ten_env.log_info("[MeetingAssistant] User joined - silent mode activated")
 
     @agent_event_handler(UserLeftEvent)
     async def _on_user_left(self, event: UserLeftEvent):
         self._rtc_user_count -= 1
 
-        # Auto-end meeting if all users left
+        # Auto-end meeting if all users left (with delay to avoid interruptions)
         if self._rtc_user_count == 0 and self.meeting_active:
-            await self._end_meeting()
+            # 添加延迟，避免暂停时误触发
+            import asyncio
+            await asyncio.sleep(10)  # 等待10秒
+            # 再次检查用户数量，如果仍然为0才结束会议
+            if self._rtc_user_count == 0 and self.meeting_active:
+                self.ten_env.log_info("All users left for 10 seconds, ending meeting")
+                await self._end_meeting()
+            else:
+                self.ten_env.log_info("User rejoined, continuing meeting")
 
     @agent_event_handler(ToolRegisterEvent)
     async def _on_tool_register(self, event: ToolRegisterEvent):
@@ -105,30 +115,54 @@ class MeetingAssistantExtension(AsyncExtension):
             await self._interrupt()
         if event.final:
             self.turn_id += 1
-            await self.agent.queue_llm_input(event.text)
+            # 禁用LLM输入，实现完全静默模式
+            # await self.agent.queue_llm_input(event.text)
+
+            # 存储转录内容用于后续总结
+            if not hasattr(self, 'stored_transcripts'):
+                self.stored_transcripts = []
+            self.stored_transcripts.append({
+                'text': event.text,
+                'timestamp': time.time(),
+                'turn_id': self.turn_id
+            })
+
         await self._send_transcript("user", event.text, event.final, stream_id)
 
     @agent_event_handler(LLMResponseEvent)
     async def _on_llm_response(self, event: LLMResponseEvent):
-        if not event.is_final and event.type == "message":
-            sentences, self.sentence_fragment = parse_sentences(
-                self.sentence_fragment, event.delta
+        # 检查是否为总结模式
+        is_summary_mode = getattr(self, '_summary_mode', False)
+
+        if is_summary_mode:
+            # 总结模式下启用输出
+            if not event.is_final and event.type == "message":
+                sentences, self.sentence_fragment = parse_sentences(
+                    self.sentence_fragment, event.delta
+                )
+                for s in sentences:
+                    await self._send_to_tts(s, False)
+
+            if event.is_final and event.type == "message":
+                remaining_text = self.sentence_fragment or ""
+                self.sentence_fragment = ""
+                await self._send_to_tts(remaining_text, True)
+
+                # 总结完成后重置模式
+                self._summary_mode = False
+
+            await self._send_transcript(
+                "assistant",
+                event.text,
+                event.is_final,
+                100,
+                data_type=("reasoning" if event.type == "reasoning" else "text"),
             )
-            for s in sentences:
-                await self._send_to_tts(s, False)
 
-        if event.is_final and event.type == "message":
-            remaining_text = self.sentence_fragment or ""
-            self.sentence_fragment = ""
-            await self._send_to_tts(remaining_text, True)
-
-        await self._send_transcript(
-            "assistant",
-            event.text,
-            event.is_final,
-            100,
-            data_type=("reasoning" if event.type == "reasoning" else "text"),
-        )
+            self.ten_env.log_info(f"[MeetingAssistant] Summary output: {event.text}")
+        else:
+            # 静默模式，记录但不输出
+            self.ten_env.log_info(f"[MeetingAssistant] LLM response stored (silent mode): {event.text}")
 
     # === Meeting-specific event handlers ===
     @agent_event_handler(MeetingStartEvent)
@@ -288,10 +322,53 @@ class MeetingAssistantExtension(AsyncExtension):
     async def _end_meeting(self):
         """End the current meeting session."""
         if self.meeting_active:
+            # 在会议结束前生成最终总结
+            await self._generate_meeting_summary()
+
             success = await self.agent.end_current_meeting()
             if success:
                 self.meeting_active = False
                 self.ten_env.log_info("Meeting ended")
+
+    async def _generate_meeting_summary(self):
+        """生成会议总结并发送TTS和转录"""
+        try:
+            # 检查是否有存储的转录内容
+            if hasattr(self, 'stored_transcripts') and self.stored_transcripts:
+                # 整理转录内容
+                transcript_text = "\n".join([
+                    f"[{i+1}] {item['text']}"
+                    for i, item in enumerate(self.stored_transcripts)
+                ])
+
+                # 构建总结请求
+                summary_prompt = f"""请根据以下会议转录内容生成简洁的总结：
+
+{transcript_text}
+
+请按以下格式输出：
+1. 主要讨论点：
+2. 关键决策：
+3. 行动项目：
+4. 会议时长：约{len(self.stored_transcripts)}个发言轮次"""
+
+                # 单次请求生成总结
+                await self.agent.queue_llm_input(summary_prompt)
+
+                # 临时启用LLM输出，仅用于总结
+                self._summary_mode = True
+
+                # 发送初始通知
+                initial_text = f"会议已结束，共记录{len(self.stored_transcripts)}条发言。正在生成总结报告..."
+            else:
+                initial_text = "会议已结束，但未记录到发言内容。"
+
+            await self._send_to_tts(initial_text, True)
+            await self._send_transcript("assistant", initial_text, True, 100)
+
+            self.ten_env.log_info(f"[MeetingAssistant] Meeting summary generation triggered with {len(getattr(self, 'stored_transcripts', []))} transcripts")
+        except Exception as e:
+            self.ten_env.log_error(f"[MeetingAssistant] Error generating summary: {e}")
 
     async def _send_meeting_notification(self, title: str, content: str):
         """Send meeting notification to the UI."""

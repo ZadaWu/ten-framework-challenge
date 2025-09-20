@@ -154,3 +154,4 @@ const frequencies = useMultibandTrackVolume(audioTrack, 5, 100, 600)
 这个功能完全基于现有的代码架构，重用了TEN Framework的RTC管理器、音频处理和UI组件，确保了代码的一致性和可维护性。
 
 
+

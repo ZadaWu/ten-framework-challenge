@@ -156,12 +156,12 @@ class MeetingAssistantConfig(BaseModel):
     # Performance settings
     max_concurrent_meetings: int = 5
     asr_buffer_size: int = 1024
-    llm_timeout: int = 30
+    llm_timeout: int = 120  # 2 minutes timeout - sufficient for most API calls
     summary_batch_size: int = 10
 
     # Debug settings
-    enable_debug_logging: bool = False
-    log_level: str = "INFO"
+    enable_debug_logging: bool = True
+    log_level: str = "DEBUG"
     log_to_file: bool = True
     log_file_path: str = "./logs/meeting_assistant.log"
 

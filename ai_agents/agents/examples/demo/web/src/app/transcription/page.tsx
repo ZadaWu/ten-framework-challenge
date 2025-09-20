@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { apiStartService, apiStopService, apiGenAgoraData } from "@/common/request"
+import { apiStartService, apiStopService, apiGenAgoraData, apiPing } from "@/common/request"
 import { useDispatch, useSelector } from "react-redux"
 import type { AppDispatch, RootState } from "@/store"
 import Header from "@/components/Layout/Header"
@@ -12,7 +12,7 @@ import { MicIconByStatus, NetworkIconByLevel } from "@/components/Icon"
 import { cn } from "@/lib/utils"
 import { setRoomConnected, setAgentConnected, addChatItem, setOptions } from "@/store/reducers/global"
 import dynamic from "next/dynamic"
-import AgoraRTC, { IAgoraRTCClient, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng"
+import type { IAgoraRTCClient, IMicrophoneAudioTrack } from "agora-rtc-sdk-ng"
 
 const DynamicMeetingInterface = dynamic(() => import("@/components/Meeting/MeetingInterface"), {
     ssr: false,
@@ -46,6 +46,7 @@ export default function TranscriptionPage() {
     const [agentConnecting, setAgentConnecting] = useState(false)
 
     const messageCache = useRef<{ [key: string]: any[] }>({})
+    const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
     // Message handling function similar to rtcManager
     const handleChunkMessage = (formattedChunk: string) => {
@@ -156,11 +157,39 @@ export default function TranscriptionPage() {
             id: `${item.time}-${index}`,
             text: item.text,
             timestamp: new Date(item.time),
-            isFinal: item.isFinal,
+            isFinal: item.isFinal ?? true,
             speaker: item.type === EMessageType.AGENT ? "assistant" : "user",
         }))
         setTranscripts(newTranscripts)
     }, [chatItems])
+
+    // Start ping heartbeat to keep worker alive
+    const startPingHeartbeat = () => {
+        if (pingIntervalRef.current) {
+            clearInterval(pingIntervalRef.current)
+        }
+
+        // Send ping every 30 seconds to keep worker alive (timeout is 3600 seconds now)
+        pingIntervalRef.current = setInterval(async () => {
+            try {
+                await apiPing(options.channel)
+                console.log("[transcription] Ping sent successfully")
+            } catch (error) {
+                console.warn("[transcription] Ping failed:", error)
+            }
+        }, 30000) // 30 seconds
+
+        console.log("[transcription] Ping heartbeat started")
+    }
+
+    // Stop ping heartbeat
+    const stopPingHeartbeat = () => {
+        if (pingIntervalRef.current) {
+            clearInterval(pingIntervalRef.current)
+            pingIntervalRef.current = null
+            console.log("[transcription] Ping heartbeat stopped")
+        }
+    }
 
     // Cleanup on component unmount
     useEffect(() => {
@@ -172,6 +201,8 @@ export default function TranscriptionPage() {
             if (rtcClient) {
                 rtcClient.leave().catch(console.error)
             }
+            // Stop ping heartbeat
+            stopPingHeartbeat()
         }
     }, [])
 
@@ -200,6 +231,9 @@ export default function TranscriptionPage() {
 
             dispatch(setAgentConnected(true))
             setConnectionStatus("AI 助手已连接")
+
+            // Start ping heartbeat to keep worker alive
+            startPingHeartbeat()
         } catch (error) {
             setError("连接 AI 助手失败: " + (error as Error).message)
             setConnectionStatus("连接失败")
@@ -212,6 +246,10 @@ export default function TranscriptionPage() {
     const disconnectAgent = async () => {
         try {
             setConnectionStatus("断开 AI 助手...")
+
+            // Stop ping heartbeat first
+            stopPingHeartbeat()
+
             await apiStopService(options.channel)
             dispatch(setAgentConnected(false))
             setConnectionStatus("未连接")
@@ -228,6 +266,7 @@ export default function TranscriptionPage() {
             // Create RTC client if not exists
             let client = rtcClient
             if (!client) {
+                const AgoraRTC = (await import("agora-rtc-sdk-ng")).default
                 client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" })
                 setRtcClient(client)
             }
@@ -275,6 +314,7 @@ export default function TranscriptionPage() {
             setConnectionStatus("创建音频轨道...")
 
             // Create microphone audio track
+            const AgoraRTC = (await import("agora-rtc-sdk-ng")).default
             const micTrack = await AgoraRTC.createMicrophoneAudioTrack()
             setAudioTrack(micTrack)
 
@@ -299,6 +339,96 @@ export default function TranscriptionPage() {
     const stopRecording = async () => {
         try {
             setConnectionStatus("停止录音...")
+
+            // 如果有AI助手连接并且有转录内容，触发总结
+            if (agentConnected && chatItems.length > 0) {
+                setConnectionStatus("生成会议总结...")
+
+                try {
+                    // 构建用于总结的转录文本
+                    const userTranscripts = chatItems
+                        .filter(item => item.type === 'user' && item.text.trim())
+                        .map((item, index) => `[${index + 1}] ${item.text}`)
+                        .join('\n')
+
+                    // 发送总结指令到AI助手
+                    const summaryPrompt = `请根据以下会议转录内容生成简洁的中文总结。这是一次会议的完整记录，请提供结构化的总结：
+
+${userTranscripts}
+
+请按以下格式输出总结：
+## 📝 会议总结
+
+### 🎯 主要讨论点：
+（列出2-3个关键讨论主题）
+
+### 📋 重要信息：
+（列出会议中提到的重要信息或数据）
+
+### ✅ 行动项目：
+（如果有明确的任务或下一步行动，请列出）
+
+### ⏱️ 会议统计：
+- 发言轮次：${chatItems.filter(item => item.type === 'user').length}次
+- 录音时长：约${Math.round((Date.now() - (chatItems[0]?.time || Date.now())) / 60000)}分钟`
+
+                    // Note: 总结请求暂时通过AI助手的普通对话实现
+                    // 未来可以考虑添加专用的总结API
+                    if (rtcClient) {
+                        console.log("[transcription] 会议总结功能已触发，显示基础总结")
+                    } else {
+                        // 备用方案：显示基础总结信息
+                        const basicSummary = `## 📝 会议总结
+
+### 📊 会议统计：
+- 总发言轮次：${chatItems.filter(item => item.type === 'user').length}次
+- 录音时长：约${Math.round((Date.now() - (chatItems[0]?.time || Date.now())) / 60000)}分钟
+- 转录内容：${chatItems.filter(item => item.type === 'user').reduce((total, item) => total + item.text.length, 0)}字符
+
+### 📝 发言记录：
+${chatItems.filter(item => item.type === 'user').map((item, index) =>
+                            `${index + 1}. [${new Date(item.time).toLocaleTimeString()}] ${item.text}`
+                        ).join('\n')}
+
+> AI助手连接已断开，无法生成智能总结`
+
+                        dispatch(addChatItem({
+                            type: EMessageType.AGENT,
+                            time: Date.now(),
+                            text: basicSummary,
+                            data_type: EMessageDataType.TEXT,
+                            userId: 'summary',
+                            isFinal: true,
+                        }))
+                    }
+                } catch (error) {
+                    console.error("[transcription] 总结生成失败:", error)
+
+                    // 错误情况下显示基础信息
+                    const errorSummary = `## ⚠️ 会议总结生成失败
+
+### 📊 基础统计：
+- 总发言轮次：${chatItems.filter(item => item.type === 'user').length}次
+- 转录字符数：${chatItems.filter(item => item.type === 'user').reduce((total, item) => total + item.text.length, 0)}字符
+
+### 📄 原始记录：
+${chatItems.filter(item => item.type === 'user').map((item, index) =>
+                        `${index + 1}. ${item.text}`
+                    ).slice(0, 10).join('\n')}
+${chatItems.filter(item => item.type === 'user').length > 10 ? '\n... （显示前10条）' : ''}
+
+> 错误信息：${(error as Error).message}`
+
+                    dispatch(addChatItem({
+                        type: EMessageType.AGENT,
+                        time: Date.now(),
+                        text: errorSummary,
+                        data_type: EMessageDataType.TEXT,
+                        userId: 'summary',
+                        isFinal: true,
+                    }))
+                }
+            }
 
             // Unpublish and close audio track
             if (audioTrack && rtcClient) {

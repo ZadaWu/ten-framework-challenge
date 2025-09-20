@@ -17,6 +17,31 @@
       "type": "system",
       "name": "ten_ai_base",
       "version": "0.7"
+    },
+    {
+      "type": "extension",
+      "name": "meeting_assistant_python",
+      "version": "0.1.0"
+    },
+    {
+      "type": "extension",
+      "name": "openai_asr_python",
+      "version": "0.2.2"
+    },
+    {
+      "type": "extension",
+      "name": "openai_llm2_python",
+      "version": "0.2.0"
+    },
+    {
+      "type": "extension",
+      "name": "openai_tts2_python",
+      "version": "0.2.3"
+    },
+    {
+      "type": "extension",
+      "name": "message_collector2",
+      "version": "0.2.0"
     }
   ],
   "scripts": {
