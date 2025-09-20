@@ -47,6 +47,9 @@ export default function TranscriptionPage() {
 
     const messageCache = useRef<{ [key: string]: any[] }>({})
     const pingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+    const pendingTextRef = useRef<string>("")
+    const lastUpdateTimeRef = useRef<number>(0)
+    const textBufferTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
     // Message handling function similar to rtcManager
     const handleChunkMessage = (formattedChunk: string) => {
@@ -108,16 +111,8 @@ export default function TranscriptionPage() {
                     const isAgent = role === "assistant"
 
                     if (text && text.trim().length > 0) {
-                        const textItem = {
-                            type: isAgent ? EMessageType.AGENT : EMessageType.USER,
-                            time: text_ts || Date.now(),
-                            text: text,
-                            data_type: EMessageDataType.TEXT,
-                            userId: stream_id,
-                            isFinal: is_final,
-                        }
-
-                        dispatch(addChatItem(textItem))
+                        // 使用智能分段逻辑
+                        handleTranscriptionText(text, is_final, isAgent, stream_id, text_ts)
                     }
                 } catch (parseError) {
                     console.error('[transcription] Error parsing complete message:', parseError)
@@ -147,6 +142,86 @@ export default function TranscriptionPage() {
             bytes[i] = binaryString.charCodeAt(i)
         }
         return new TextDecoder('utf-8').decode(bytes)
+    }
+
+    // 修复重复问题的智能转录分段处理
+    const handleTranscriptionText = (text: string, is_final: boolean, isAgent: boolean, stream_id: string, text_ts: number) => {
+        const currentTime = Date.now()
+
+        if (isAgent) {
+            // AI助手的消息直接显示，不需要缓冲
+            const textItem = {
+                type: EMessageType.AGENT,
+                time: text_ts || currentTime,
+                text: text,
+                data_type: EMessageDataType.TEXT,
+                userId: stream_id,
+                isFinal: is_final,
+            }
+            dispatch(addChatItem(textItem))
+            return
+        }
+
+        // 用户语音转录的简化逻辑（避免重复）
+        if (is_final) {
+            // 清除任何待处理的定时器
+            if (textBufferTimeoutRef.current) {
+                clearTimeout(textBufferTimeoutRef.current)
+                textBufferTimeoutRef.current = null
+            }
+
+            // 合并缓冲的内容与当前文本
+            let finalText = text.trim()
+            if (pendingTextRef.current.trim()) {
+                // 检查是否已经包含了缓冲的内容（避免重复）
+                if (!text.includes(pendingTextRef.current.trim())) {
+                    finalText = (pendingTextRef.current + " " + text).trim()
+                }
+            }
+
+            // 清空缓冲区
+            pendingTextRef.current = ""
+
+            // 只有当文本有意义时才输出
+            if (finalText.length > 3) {
+                const textItem = {
+                    type: EMessageType.USER,
+                    time: text_ts || currentTime,
+                    text: finalText,
+                    data_type: EMessageDataType.TEXT,
+                    userId: stream_id,
+                    isFinal: true,
+                }
+                dispatch(addChatItem(textItem))
+                lastUpdateTimeRef.current = currentTime
+            }
+        } else {
+            // 非最终结果：简单缓存，不立即输出
+            pendingTextRef.current = text.trim()
+            lastUpdateTimeRef.current = currentTime
+
+            // 清除之前的定时器
+            if (textBufferTimeoutRef.current) {
+                clearTimeout(textBufferTimeoutRef.current)
+                textBufferTimeoutRef.current = null
+            }
+
+            // 设置超时保护：如果3秒内没有最终结果，就输出当前内容
+            textBufferTimeoutRef.current = setTimeout(() => {
+                if (pendingTextRef.current.trim().length > 3) {
+                    const textItem = {
+                        type: EMessageType.USER,
+                        time: lastUpdateTimeRef.current || currentTime,
+                        text: pendingTextRef.current.trim(),
+                        data_type: EMessageDataType.TEXT,
+                        userId: stream_id,
+                        isFinal: true,
+                    }
+                    dispatch(addChatItem(textItem))
+                    pendingTextRef.current = ""
+                }
+            }, 3000) // 3秒超时
+        }
     }
 
     // 改进的智能语义分析
@@ -328,70 +403,45 @@ export default function TranscriptionPage() {
         const questions = analyzedMessages
             .filter(msg => msg.analysis.category === 'question')
 
-        // 生成智能分析报告
+        // 生成简洁的会议总结
         const urgentActions = actionItems.filter(item => item.analysis.urgencyLevel >= 2)
         const normalActions = actionItems.filter(item => item.analysis.urgencyLevel === 1)
         const lowPriorityActions = actionItems.filter(item => item.analysis.urgencyLevel === 0)
 
-        return `## 📝 会议总结（智能语义分析）
+        // 简化输出，只保留核心内容
+        return `## 📝 会议总结
 
-### 🎯 核心讨论内容：
+### 🎯 主要讨论内容
 ${importantInfo.length > 0 ?
-                importantInfo.slice(0, 5).map(item => `- ${item.text} (置信度: ${Math.round(item.analysis.confidence * 100)}%)`).join('\n')
-                : '- 本次会议主要为语音交流，具体内容请参考完整转录记录'}
+                importantInfo.slice(0, 4).map(item => `• ${item.text}`).join('\n')
+                : '• 本次会议为语音交流，未识别到具体讨论要点'}
 
-### 💡 重要决策与结论：
-${decisions.length > 0 ?
-                decisions.map(item => `- ${item.text}`).join('\n')
-                : '- 转录中未识别到明确的决策内容'}
+${decisions.length > 0 ? `\n### 💡 重要决策
+${decisions.map(item => `• ${item.text}`).join('\n')}` : ''}
 
-### ✅ 行动计划与待办事项：
+### ✅ 待办事项
 
-#### 🚨 高优先级（紧急）：
-${urgentActions.length > 0 ?
-                urgentActions.map(item => `- ${item.text}`).join('\n')
-                : '- 无紧急待办事项'}
+${urgentActions.length > 0 ? `**🚨 紧急任务：**
+${urgentActions.map(item => `• ${item.text}`).join('\n')}
 
-#### ⚡ 中等优先级（重要）：
-${normalActions.length > 0 ?
-                normalActions.map(item => `- ${item.text}`).join('\n')
-                : '- 无中等优先级待办事项'}
+` : ''}${normalActions.length > 0 ? `**⚡ 重要任务：**
+${normalActions.map(item => `• ${item.text}`).join('\n')}
 
-#### 📋 一般优先级：
-${lowPriorityActions.length > 0 ?
-                lowPriorityActions.slice(0, 3).map(item => `- ${item.text}`).join('\n')
-                : '- 无一般待办事项'}
+` : ''}${lowPriorityActions.length > 0 ? `**📋 一般任务：**
+${lowPriorityActions.slice(0, 3).map(item => `• ${item.text}`).join('\n')}
 
-### ⏰ 时间安排与节点：
-${timeRelated.length > 0 ?
-                timeRelated.map(item => `- ${item.text}`).join('\n')
-                : '- 转录中未提及具体时间安排'}
+` : ''}${actionItems.length === 0 ? '• 暂无明确的待办事项' : ''}
 
-### ❓ 待跟进问题：
-${questions.length > 0 ?
-                questions.map(item => `- ${item.text}`).join('\n')
-                : '- 无待跟进问题'}
+${timeRelated.length > 0 ? `### ⏰ 时间节点
+${timeRelated.map(item => `• ${item.text}`).join('\n')}
 
-### 📊 会议统计：
-- 总发言轮次：${totalMessages}次
-- 录音时长：约${totalDuration}分钟
-- 转录字数：约${Math.round(totalChars / 2)}字
-- 识别到的行动项：${actionItems.length}个
-- 决策事项：${decisions.length}个
-- 时间相关信息：${timeRelated.length}条
+` : ''}${questions.length > 0 ? `### ❓ 待跟进
+${questions.map(item => `• ${item.text}`).join('\n')}
 
-### 📝 完整转录记录：
-${messages.map((item, index) =>
-                    `${index + 1}. [${new Date(item.time).toLocaleTimeString()}] ${item.text}`
-                ).join('\n')}
-
-### 🤖 智能分析说明：
-- **分析方法**：基于句式结构、语义模式和上下文理解
-- **置信度评估**：综合考虑语言模式、时间信息、紧急程度等因素
-- **分类逻辑**：自动识别行动项、决策、问题和一般信息
-- **优先级判断**：基于语言表达的紧急程度自动分级
-
-> **注意**：此为基于自然语言处理的智能分析结果。如需更深度的语义理解和个性化总结，建议连接AI助手。`
+` : ''}### 📊 会议信息
+• 发言轮次：${totalMessages}次
+• 录音时长：${totalDuration}分钟
+• 待办事项：${actionItems.length}个`
     }
 
     // Removed auto scroll - user controls scrolling manually
@@ -436,6 +486,22 @@ ${messages.map((item, index) =>
         }
     }
 
+    // Page initialization - cleanup any existing channels on mount
+    useEffect(() => {
+        const cleanupExistingChannel = async () => {
+            try {
+                // 尝试清理可能存在的僵尸通道（页面刷新后的残留）
+                await apiStopService(options.channel)
+                console.log("[transcription] Cleaned up existing channel on page load")
+            } catch (error) {
+                // 忽略清理错误，因为通道可能本来就不存在
+                console.log("[transcription] No existing channel to cleanup (expected)")
+            }
+        }
+
+        cleanupExistingChannel()
+    }, [options.channel])
+
     // Cleanup on component unmount
     useEffect(() => {
         return () => {
@@ -448,6 +514,16 @@ ${messages.map((item, index) =>
             }
             // Stop ping heartbeat
             stopPingHeartbeat()
+            // Clear text buffer timeout
+            if (textBufferTimeoutRef.current) {
+                clearTimeout(textBufferTimeoutRef.current)
+                textBufferTimeoutRef.current = null
+            }
+
+            // 尝试清理通道（虽然在页面刷新时不会执行）
+            apiStopService(options.channel).catch(() => {
+                // 忽略错误，因为通道可能已经不存在
+            })
         }
     }, [])
 
@@ -467,10 +543,54 @@ ${messages.map((item, index) =>
                 greeting: "您好，我是您的AI会议助手。我将帮助您进行会议转录、总结和任务管理。",
             }
 
-            const res = await apiStartService(startServicePayload)
+            let res = await apiStartService(startServicePayload)
             const { code, msg } = res || {}
 
-            if (code !== "0") {
+            // 如果通道已存在，先尝试停止然后重新连接
+            if (code === "10003" || msg?.includes("channel existed")) {
+                setConnectionStatus("通道已存在，正在重置...")
+                console.log("[transcription] Channel already exists, attempting to stop and restart")
+
+                try {
+                    // 先尝试停止现有的通道
+                    await apiStopService(options.channel)
+                    console.log("[transcription] Successfully stopped existing channel")
+
+                    // 等待一小段时间确保服务器清理完成
+                    await new Promise(resolve => setTimeout(resolve, 1000))
+
+                    // 重新尝试启动服务
+                    setConnectionStatus("重新连接 AI 会议助手...")
+                    res = await apiStartService(startServicePayload)
+                    const { code: newCode, msg: newMsg } = res || {}
+
+                    if (newCode !== "0") {
+                        throw new Error(newMsg || "重新连接失败")
+                    }
+                } catch (stopError) {
+                    console.warn("[transcription] Failed to stop existing channel:", stopError)
+                    // 如果停止失败，尝试使用不同的channel名称
+                    const timestamp = Date.now()
+                    const newChannel = `${options.channel}_${timestamp}`
+                    console.log("[transcription] Trying with new channel name:", newChannel)
+
+                    setConnectionStatus("使用新通道连接...")
+                    const newStartServicePayload = {
+                        ...startServicePayload,
+                        channel: newChannel,
+                    }
+
+                    res = await apiStartService(newStartServicePayload)
+                    const { code: finalCode, msg: finalMsg } = res || {}
+
+                    if (finalCode !== "0") {
+                        throw new Error(finalMsg || "连接失败")
+                    }
+
+                    // 更新options中的channel名称
+                    dispatch(setOptions({ ...options, channel: newChannel }))
+                }
+            } else if (code !== "0") {
                 throw new Error(msg || "连接失败")
             }
 
@@ -482,6 +602,7 @@ ${messages.map((item, index) =>
         } catch (error) {
             setError("连接 AI 助手失败: " + (error as Error).message)
             setConnectionStatus("连接失败")
+            console.error("[transcription] Connect agent failed:", error)
         } finally {
             setAgentConnecting(false)
         }
@@ -757,22 +878,10 @@ ${generateBasicSummary(userMessages)}
             const userMessages = chatItems.filter(item => item.type === 'user' && item.text.trim())
 
             if (agentConnected) {
-                // 如果AI助手已连接，显示提示但不实际发送（因为sendStreamMessage不可用）
-                const summaryNote = `## 💡 智能总结提示
+                // 如果AI助手已连接，提供简洁的提示和基础总结
+                const summaryNote = `## 💡 获得更佳总结效果
 
-为了获得最佳的会议总结和待办清单，请按以下步骤操作：
-
-### 🤖 使用AI助手总结：
-1. 确保AI助手已连接（绿色指示器）
-2. 直接对AI助手说："请帮我总结刚才的会议内容，包括详细的待办清单"
-3. AI助手将基于完整的对话历史生成专业的总结
-
-### 🔧 高级总结功能正在开发中
-- 一键智能总结功能
-- 自动待办事项提取
-- 优先级智能分类
-
-现在为您提供基础分析总结：
+直接对AI助手说："**请总结刚才的会议内容和待办事项**"，可获得更智能的分析。
 
 ---
 
